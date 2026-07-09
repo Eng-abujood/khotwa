@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="logo.png">
+    <title>خُطوة (Khotwa) </title>
+    <link rel="stylesheet" href="style.css">
+    <!-- أيقونات FontAwesome الرائعة -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- 1. شاشة تسجيل الدخول -->
+    <div id="login-screen" class="screen-overlay">
+        <div class="login-card">
+            <h2><i class="fa-solid fa-user-shield"></i> تسجيل الدخول</h2>
+            <p>مرحباً بك في منصة خُطوة </p>
+                        <p>حيث الاحتراف في انشاء السير الذاتية</p>
+
+            <form id="login-form">
+                <div class="input-group">
+                    <label>البريد الإلكتروني</label>
+                    <input type="email" id="login-email" required placeholder="example@gmail.com">
+                </div>
+                <div class="input-group">
+                    <label>كلمة المرور</label>
+                    <input type="password" id="login-pass" required placeholder="••••••••">
+                </div>
+                <button type="submit" class="btn-primary">دخول للمنصة</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. واجهة التطبيق الرئيسية (تظهر بعد الدخول) -->
+    <div id="main-app" class="app-container hidden">
+        
+        <!-- الهيدر المطور مع خيار تبديل اللغة ومعلوماتك -->
+        <header class="app-header no-print">
+            <div class="logo">
+                <h1><i class="fa-solid fa-file-invoice"></i> خُطوة <span>Khotwa</span></h1>
+            </div>
+            
+            <!-- زر تبديل اللغة الاحترافي -->
+            <div class="language-switcher">
+                <button type="button" id="lang-toggle-btn" class="btn-lang" onclick="toggleLanguage()">
+                    <i class="fa-solid fa-globe"></i> English
+                </button>
+            </div>
+
+            <div class="developer-info">
+                <span>تم التطوير بواسطة: <strong>Mohammad Khayat</strong></span>
+                <span class="badge">Software Engineering</span>
+                <div class="dev-links">
+                    <a href="https://www.instagram.com/_abu.jood_/" target="_blank" title="إنستغرام"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="tel:0781707630" title="اتصال هاتف"><i class="fa-solid fa-phone"></i> 0781707630</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- محتوى التطبيق: لوحة التحكم والتحرير + لوحة المعاينة -->
+        <main class="app-content">
+            
+            <!-- لوحة المدخلات والتحرير -->
+            <section class="editor-section no-print">
+                <h2 id="editor-main-title"><i class="fa-solid fa-pen-to-square"></i> أدخل بياناتك بدقة</h2>
+                
+                <!-- رفع الصورة -->
+                <div class="form-group image-upload-box">
+                    <label for="image-input" id="lbl-upload">
+                        <i class="fa-solid fa-camera"></i> رفع صورة شخصية
+                    </label>
+                    <input type="file" id="image-input" accept="image/*">
+                </div>
+
+                <!-- قسم المعلومات الشخصية -->
+                <div class="form-block" id="block-personal">
+                    <h3><i class="fa-solid fa-user"></i> المعلومات الشخصية</h3>
+                    <div class="grid-2">
+                        <input type="text" id="in-name" placeholder="الاسم الكامل">
+                        <input type="text" id="in-title" placeholder="المسمى الوظيفي (مثلا: مهندس برمجيات)">
+                    </div>
+                    <div class="grid-2">
+                        <input type="email" id="in-email" placeholder="البريد الإلكتروني">
+                        <input type="tel" id="in-phone" placeholder="رقم الهاتف">
+                    </div>
+                    <div class="grid-2">
+                        <input type="text" id="in-location" placeholder="المدينة، الدولة">
+                        <input type="number" id="in-age" placeholder="العمر">
+                    </div>
+                    <textarea id="in-summary" rows="3" placeholder="نبذة تعريفية مختصرة عنك..."></textarea>
+                </div>
+
+                <!-- قسم الخبرات المهنية -->
+                <div class="form-block" id="block-experience">
+                    <h3><i class="fa-solid fa-briefcase"></i> الخبرات المهنية</h3>
+                    <div id="experience-list"></div>
+                    <button type="button" class="btn-secondary btn-add" onclick="addExperienceField()"><i class="fa-solid fa-plus"></i> إضافة خبرة</button>
+                </div>
+
+                <!-- قسم التعليم والتخصص -->
+                <div class="form-block" id="block-education">
+                    <h3><i class="fa-solid fa-graduation-cap"></i> التعليم والتخصص</h3>
+                    <div id="education-list"></div>
+                    <button type="button" class="btn-secondary btn-add" onclick="addEducationField()"><i class="fa-solid fa-plus"></i> إضافة تعليم</button>
+                </div>
+
+                <!-- قسم المهارات -->
+                <div class="form-block" id="block-skills">
+                    <h3><i class="fa-solid fa-code"></i> المهارات</h3>
+                    <div id="skills-list"></div>
+                    <button type="button" class="btn-secondary btn-add" onclick="addSkillField()"><i class="fa-solid fa-plus"></i> إضافة مهارة</button>
+                </div>
+
+                <!-- قسم اللغات -->
+                <div class="form-block" id="block-languages">
+                    <h3><i class="fa-solid fa-language"></i> اللغات</h3>
+                    <div id="languages-list"></div>
+                    <button type="button" class="btn-secondary btn-add" onclick="addLanguageField()"><i class="fa-solid fa-plus"></i> إضافة لغة</button>
+                </div>
+
+                <!-- زر الطباعة النهائي -->
+                <button type="button" id="btn-print-cv" class="btn-success" onclick="window.print()"><i class="fa-solid fa-print"></i> طباعة وتحميل PDF</button>
+            </section>
+
+            <!-- لوحة المعاينة الفورية (الورقة الحية) -->
+            <section class="preview-section">
+                <div class="cv-template" id="cv-preview">
+                    
+                    <!-- الهيدر الداخلي للـ CV -->
+                    <div class="cv-header">
+                        <div class="cv-photo-container">
+                            <img id="view-photo" src="https://via.placeholder.com/120" alt="الصورة الشخصية">
+                        </div>
+                        <div class="cv-main-info">
+                            <h1 id="view-name">الاسم الكامل يظهر هنا</h1>
+                            <h3 id="view-title">المسمى الوظيفي</h3>
+                            <p id="view-summary" class="cv-summary">النبذة التعريفية تظهر هنا بشكل منسق واحترافي لتعكس مهاراتك الأساسية.</p>
+                        </div>
+                    </div>
+
+                    <!-- الجسم الداخلي المقسم لعمودين متناسقين بالملي -->
+                    <div class="cv-body">
+                        <!-- العمود الجانبي (التفاصيل، المهارات، اللغات) -->
+                        <div class="cv-sidebar" id="cv-sidebar-elem">
+                            <div class="cv-section">
+                                <h4 id="cv-title-contact"><i class="fa-solid fa-address-card"></i> الاتصال والتفاصيل</h4>
+                                <p id="view-age-box"><b>العمر:</b> <span id="view-age">-</span></p>
+                                <p><i class="fa-solid fa-envelope"></i> <span id="view-email">mail@example.com</span></p>
+                                <p><i class="fa-solid fa-phone"></i> <span id="view-phone">07xxxxxxxx</span></p>
+                                <p><i class="fa-solid fa-location-dot"></i> <span id="view-location">المدينة، الدولة</span></p>
+                            </div>
+
+                            <div class="cv-section">
+                                <h4 id="cv-title-skills"><i class="fa-solid fa-star"></i> المهارات</h4>
+                                <ul id="view-skills" class="skills-output"></ul>
+                            </div>
+
+                            <div class="cv-section">
+                                <h4 id="cv-title-langs"><i class="fa-solid fa-globe"></i> اللغات</h4>
+                                <ul id="view-languages" class="languages-output"></ul>
+                            </div>
+                        </div>
+
+                        <!-- العمود الرئيسي الكبير (الخبرات، التعليم) -->
+                        <div class="cv-main-content">
+                            <div class="cv-section">
+                                <h4 id="cv-title-exp"><i class="fa-solid fa-briefcase"></i> الخبرة المهنية</h4>
+                                <div id="view-experience"></div>
+                            </div>
+                            <div class="cv-section">
+                                <h4 id="cv-title-edu"><i class="fa-solid fa-graduation-cap"></i> التعليم والتخصص</h4>
+                                <div id="view-education"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
