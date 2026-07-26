@@ -981,8 +981,11 @@ to { opacity: 1; }
 
 <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
 <script>
-// اجعل هذا المتغير true عند الحاجة للصيانة
-const isMaintenance = false; 
+/*---------------------------------------------------------------*/
+/*-------------عند الصيانة true---------عند الانتهاء false----------------*/
+                   const isMaintenance = false; 
+/*---------------------------------------------------------------*/
+/*---------------------------------------------------------------*/
 
 if (isMaintenance) {
     const loader = document.getElementById('maintenance-mode');
