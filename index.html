@@ -15,6 +15,9 @@
 <!-- مكتبات إضافية تم استدعاؤها خصيصاً لتحويل ملفات الـ Word والـ PowerPoint الفعلية -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 
+<!-- استدعاء مكتبة EmailJS لارسال رموز التحقق -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap');
 
@@ -727,8 +730,15 @@ to { opacity: 1; }
         <label>كلمة المرور</label>
         <input type="password" id="login-pass" required placeholder="........">
       </div>
+      
+      <!-- حقل رمز التحقق (مخفي افتراضياً ويظهر عند الحاجة للتحقق) -->
+      <div class="input-group hidden" id="verification-group">
+        <label style="color: var(--accent-color);">رمز التحقق المرسل إلى بريدك</label>
+        <input type="text" id="verification-code-input" placeholder="أدخل الرمز المكون من 6 أرقام">
+      </div>
+
       <button type="submit" class="btn-primary" id="btn-auth-submit">دخول للمنصة</button>
-              <a href="forgot-password.html">نسيت كلمة المرور؟</a>
+      <a href="forgot-password.html" id="forgot-pass-link">نسيت كلمة المرور؟</a>
       <a href="#" id="toggle-auth-link" style="color: var(--text-muted); display: block; margin-top: 1.2rem; font-size: 0.85rem; text-decoration: none;">ليس لديك حساب؟ إنشاء حساب جديد</a>
     </form>
   </div>
@@ -971,13 +981,14 @@ to { opacity: 1; }
 
 <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
 <script>
-   // اجعل هذا المتغير true عند الحاجة للصيانة
-const isMaintenance = true; 
+// اجعل هذا المتغير true عند الحاجة للصيانة
+const isMaintenance = false; 
 
 if (isMaintenance) {
     const loader = document.getElementById('maintenance-mode');
     if (loader) loader.style.display = 'flex';
 }
+
 // تهيئة Firebase والاتصال
 const firebaseConfig = {
   apiKey: "AIzaSyCj3TexX9Akm3Sbau58vqe9xRboB10tx2A",
@@ -993,6 +1004,14 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
+// تفعيل حفظ الجلسة دائمًا في LocalStorage
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+// تهيئة مكتبة EmailJS
+(function(){
+   emailjs.init("2v_D_mEqMgYpgwPq1");
+})();
+
 const ADMIN_EMAIL = "Admin@platform.com";
 const ADMIN_PASS = "Kt975";
 
@@ -1000,21 +1019,37 @@ let currentUser = null;
 let currentLang = 'ar';
 let isLoginMode = true;
 
+// متغيرات التعامل مع رمز التحقق
+let generatedVerificationCode = null;
+let isAwaitingVerification = false;
+
 // المراقبة التلقائية لحالة تسجيل الدخول
 auth.onAuthStateChanged((user) => {
   const authHeaderBox = document.getElementById('auth-header-actions');
-  if (user) {
-    currentUser = user;
-    authHeaderBox.innerHTML = `
-      <span style="color: var(--success-color); font-weight: bold; margin-left: 10px;"><i class="fa-solid fa-circle-user"></i> متصل</span>
-      <button class="btn-lang" onclick="logout()" style="border-color: #ef4444; color: #ef4444;"><i class="fa-solid fa-right-from-bracket"></i> خروج</button>
-    `;
+  const storedUser = localStorage.getItem('khotwa_logged_user');
+
+  if (user || storedUser) {
+    currentUser = user || JSON.parse(storedUser);
+    
+    // فحص إذا كان الحساب هو حساب الأدمن
+    if (currentUser.email === ADMIN_EMAIL) {
+      showScreen('admin-dashboard');
+    }
+
+    if (authHeaderBox) {
+      authHeaderBox.innerHTML = `
+        <span style="color: var(--success-color); font-weight: bold; margin-left: 10px;"><i class="fa-solid fa-circle-user"></i> متصل</span>
+        <button class="btn-lang" onclick="logout()" style="border-color: #ef4444; color: #ef4444;"><i class="fa-solid fa-right-from-bracket"></i> خروج</button>
+      `;
+    }
     loadUserDataToForm();
   } else {
     currentUser = null;
-    authHeaderBox.innerHTML = `
-      <button class="btn-lang" onclick="openAuthModal()"><i class="fa-solid fa-user"></i> دخول / تسجيل حساب</button>
-    `;
+    if (authHeaderBox) {
+      authHeaderBox.innerHTML = `
+        <button class="btn-lang" onclick="openAuthModal()"><i class="fa-solid fa-user"></i> دخول / تسجيل حساب</button>
+      `;
+    }
   }
 });
 
@@ -1024,82 +1059,175 @@ function openAuthModal() {
 
 function closeAuthModal() {
   document.getElementById('auth-modal').classList.remove('active');
+  resetAuthForm();
+}
+
+function resetAuthForm() {
+  isAwaitingVerification = false;
+  generatedVerificationCode = null;
+  document.getElementById('verification-group').classList.add('hidden');
+  document.getElementById('login-form').reset();
+  
+  const btnSubmit = document.getElementById('btn-auth-submit');
+  if (isLoginMode) {
+    btnSubmit.innerText = "دخول للمنصة";
+  } else {
+    btnSubmit.innerText = "سجل الآن";
+  }
 }
 
 // تبديل واجهة المودال من تسجيل لدخول
 document.getElementById('toggle-auth-link').addEventListener('click', function(e) {
   e.preventDefault();
   isLoginMode = !isLoginMode;
+  resetAuthForm();
+  
   const authTitle = document.getElementById('auth-title');
   const nameGroup = document.getElementById('name-group');
   const btnSubmit = document.getElementById('btn-auth-submit');
+  const forgotLink = document.getElementById('forgot-pass-link');
+
   if (isLoginMode) {
     authTitle.innerText = "تسجيل الدخول";
     nameGroup.classList.add('hidden');
+    forgotLink.classList.remove('hidden');
     btnSubmit.innerText = "دخول للمنصة";
     this.innerText = "ليس لديك حساب؟ إنشاء حساب جديد";
   } else {
     authTitle.innerText = "إنشاء حساب جديد";
     nameGroup.classList.remove('hidden');
+    forgotLink.classList.add('hidden');
     btnSubmit.innerText = "سجل الآن";
     this.innerText = "لديك حساب بالفعل؟ تسجيل الدخول";
   }
 });
 
-// إرسال كود الدخول / التسجيل
+// إرسال كود الدخول / التسجيل وتأكيد رمز EmailJS
 document.getElementById('login-form').addEventListener('submit', function(e) {
   e.preventDefault();
   const email = document.getElementById('login-email').value.trim();
   const pass = document.getElementById('login-pass').value;
   
   if (isLoginMode) {
+    // 1. حساب الأدمن المباشر
     if (email === ADMIN_EMAIL && pass === ADMIN_PASS) {
       alert("مرحباً بك مجدداً في لوحتك الحية يا مطور محمد الخياط");
+      localStorage.setItem('khotwa_logged_user', JSON.stringify({ email: ADMIN_EMAIL, uid: 'admin_id' }));
+      currentUser = { email: ADMIN_EMAIL, uid: 'admin_id' };
       closeAuthModal();
       showScreen('admin-dashboard');
       return;
     }
-    
-    auth.signInWithEmailAndPassword(email, pass)
-      .then(() => {
-        alert("أهلاً بك في منصة خطوة الذكية!");
-        closeAuthModal();
-      })
-      .catch((error) => {
-        alert("خطأ: " + error.message);
-      });
+
+    // 2. تسجيل الدخول عبر الفحص المباشر في Firestore (يضمن استخدام كلمة السر الجديدة دائماً)
+    db.collection("users_profiles").where("email", "==", email).get().then((querySnapshot) => {
+      if (!querySnapshot.empty) {
+        let userData = null;
+        let userId = null;
+
+        querySnapshot.forEach((doc) => {
+          userData = doc.data();
+          userId = doc.id;
+        });
+
+        // التحقق من كلمة السر (إذا كانت مطابقة بـ Firestore أو Firebase Auth)
+        if (userData && userData.password === pass) {
+          alert("أهلاً بك في منصة خطوة الذكية!");
+          const userObj = { uid: userId, email: email, name: userData.name || '' };
+          localStorage.setItem('khotwa_logged_user', JSON.stringify(userObj));
+          currentUser = userObj;
+          
+          closeAuthModal();
+          location.reload(); // تحديث الصفحة لتأكيد الجلسة
+        } else {
+          // محاولة ثانوية عبر Auth إن لم تكن مسجلة في Firestore كـ Plaintext
+          auth.signInWithEmailAndPassword(email, pass).then((userCredential) => {
+            alert("أهلاً بك في منصة خطوة الذكية!");
+            closeAuthModal();
+          }).catch((error) => {
+            alert("خطأ: كلمة المرور أو البريد الإلكتروني غير صحيح!");
+          });
+        }
+      } else {
+        alert("البريد الإلكتروني غير مسجل في النظام!");
+      }
+    }).catch((error) => {
+      alert("خطأ في الاتصال بقاعدة البيانات: " + error.message);
+    });
+
   } else {
+    // حالة إنشاء حساب جديد
     const name = document.getElementById('reg-name').value.trim();
     if(!name) { alert("الرجاء كتابة الاسم الكامل"); return; }
     
-    auth.createUserWithEmailAndPassword(email, pass)
-      .then((userCredential) => {
-        const u = userCredential.user;
-        return db.collection("users_profiles").doc(u.uid).set({
-          uid: u.uid,
-          name: name,
-          email: email,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+    if (!isAwaitingVerification) {
+      generatedVerificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      
+      const btnSubmit = document.getElementById('btn-auth-submit');
+      btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري إرسال رمز التحقق...';
+      btnSubmit.disabled = true;
+
+      emailjs.send("service_0u0o85c", "template_ozax99f", {
+        to_name: name,
+        to_email: email,
+        reply_to: email,
+        passcode: generatedVerificationCode,
+        verification_code: generatedVerificationCode
       })
       .then(() => {
-        alert("تم إنشاء حسابك بنجاح وحفظه!");
-        closeAuthModal();
+        alert("تم إرسال رمز التحقق إلى بريدك الإلكتروني بنجاح!");
+        isAwaitingVerification = true;
+        document.getElementById('verification-group').classList.remove('hidden');
+        btnSubmit.innerText = "تأكيد الرمز وإتمام التسجيل";
+        btnSubmit.disabled = false;
       })
-      .catch((error) => {
-        alert("خطأ بالتسجيل: " + error.message);
+      .catch((err) => {
+        alert("فشل إرسال رمز التحقق عبر EmailJS: " + (err.text || err.message || JSON.stringify(err)));
+        btnSubmit.innerText = "سجل الآن";
+        btnSubmit.disabled = false;
       });
+
+    } else {
+      const userEnteredCode = document.getElementById('verification-code-input').value.trim();
+      
+      if (userEnteredCode !== generatedVerificationCode) {
+        alert("رمز التحقق غير صحيح! يرجى التأكد من الرمز المرسل إلى بريدك الإلكتروني.");
+        return;
+      }
+
+      auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+        .then(() => {
+          return auth.createUserWithEmailAndPassword(email, pass);
+        })
+        .then((userCredential) => {
+          const u = userCredential.user;
+          return db.collection("users_profiles").doc(u.uid).set({
+            uid: u.uid,
+            name: name,
+            email: email,
+            password: pass, // حفظ كلمة السر في Firestore لضمان المطابقة دائماً
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        })
+        .then(() => {
+          alert("تم تأكيد البريد الإلكتروني وإنشاء حسابك بنجاح!");
+          closeAuthModal();
+        })
+        .catch((error) => {
+          alert("خطأ بالتسجيل: " + error.message);
+        });
+    }
   }
 });
 
 function logout() {
+  localStorage.removeItem('khotwa_logged_user');
   auth.signOut().then(() => {
     alert("تم تسجيل الخروج بنجاح.");
-    backToPortal();
+    location.reload();
   });
 }
 
-// التنقل بين الأقسام والخدمات
 function navigateToService(service) {
   if (service === 'cv') {
     showScreen('main-app');
@@ -1119,16 +1247,13 @@ function showScreen(screenId) {
   document.getElementById('admin-dashboard').classList.add('hidden');
   
   const target = document.getElementById(screenId);
-  target.classList.remove('hidden');
+  if (target) target.classList.remove('hidden');
   
   if (screenId === 'admin-dashboard') {
     loadAdminFolders();
   }
 }
 
-// ==========================================
-// منطق الأدمن ومستعرض المجلدات التفاعلي للعملاء ومشاريعهم
-// ==========================================
 function loadAdminFolders() {
   const grid = document.getElementById('admin-users-folders');
   grid.innerHTML = '<div style="color: var(--accent-color);">جاري جلب مجلدات المستخدمين ومشاريعهم سحابياً...</div>';
@@ -1194,13 +1319,10 @@ function switchAdminTab(tab) {
   }
 }
 
-// ==========================================
-// نظام الحفظ السحابي التلقائي للمستخدمين
-// ==========================================
 function saveUserDataToCloud() {
   if (!currentUser) return;
   const badge = document.getElementById('save-status-badge');
-  badge.innerHTML = 'جاري الحفظ تلقائياً... <i class="fa-solid fa-spinner fa-spin"></i>';
+  if (badge) badge.innerHTML = 'جاري الحفظ تلقائياً... <i class="fa-solid fa-spinner fa-spin"></i>';
   
   const cvData = {
     name: document.getElementById('in-name').value,
@@ -1215,9 +1337,9 @@ function saveUserDataToCloud() {
   db.collection("users_profiles").doc(currentUser.uid).set({
     cvData: cvData
   }, { merge: true }).then(() => {
-    badge.innerHTML = 'تم الحفظ سحابياً بنجاح <i class="fa-solid fa-cloud"></i>';
+    if (badge) badge.innerHTML = 'تم الحفظ سحابياً بنجاح <i class="fa-solid fa-cloud"></i>';
   }).catch(() => {
-    badge.innerHTML = 'فشل الحفظ التلقائي سحابياً <i class="fa-solid fa-triangle-exclamation"></i>';
+    if (badge) badge.innerHTML = 'فشل الحفظ التلقائي سحابياً <i class="fa-solid fa-triangle-exclamation"></i>';
   });
 }
 
@@ -1234,28 +1356,27 @@ function loadUserDataToForm() {
       document.getElementById('in-age').value = data.age || '';
       document.getElementById('in-summary').value = data.summary || '';
       
-      // إطلاق إشعارات الإدخال لتحديث واجهة السيرة الذاتية فوراً
       bindings.forEach(b => {
-        document.getElementById(b.input).dispatchEvent(new Event('input'));
+        const el = document.getElementById(b.input);
+        if (el) el.dispatchEvent(new Event('input'));
       });
-      document.getElementById('in-age').dispatchEvent(new Event('input'));
+      const ageEl = document.getElementById('in-age');
+      if (ageEl) ageEl.dispatchEvent(new Event('input'));
     }
   });
 }
 
-// إضافة مراقبي أحداث لحفظ البيانات بمجرد قيام المستخدم بالكتابة
 const inputFieldsToWatch = ['in-name', 'in-title', 'in-email', 'in-phone', 'in-location', 'in-age', 'in-summary'];
 inputFieldsToWatch.forEach(id => {
-  document.getElementById(id).addEventListener('input', () => {
-    // تشغيل نظام توفير المهلة (debounce) لتجنب الكتابة المتكررة على قواعد البيانات
-    clearTimeout(window.saveTimeout);
-    window.saveTimeout = setTimeout(saveUserDataToCloud, 1000);
-  });
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', () => {
+      clearTimeout(window.saveTimeout);
+      window.saveTimeout = setTimeout(saveUserDataToCloud, 1000);
+    });
+  }
 });
 
-// ==========================================
-// المحرك الأصلي لبناء السير الذاتية والترجمة
-// ==========================================
 const translations = {
 ar: {
 dir: 'rtl', btnLang: '<i class="fa-solid fa-globe"></i> English', devBy: 'تم التطوير بواسطة:',
@@ -1314,73 +1435,83 @@ const bindings = [
 ];
 
 bindings.forEach(b => {
-document.getElementById(b.input).addEventListener('input', (e) => {
-document.getElementById(b.output).innerText = e.target.value || "..."; });
-});
-
-document.getElementById('in-age').addEventListener('input', (e) => {
-document.getElementById('view-age-box').innerHTML = translations[currentLang].cvAgeLabel + `<span>${e.target.value || '-'}</span>`;
-});
-
-document.getElementById('image-input').addEventListener('change', function(e) {
-const file = e.target.files[0];
-if (file) {
-const reader = new FileReader(); reader.onload = function(event) {
-document.getElementById('view-photo').src = event.target.result; };
-reader.readAsDataURL(file);
+const el = document.getElementById(b.input);
+if(el) {
+  el.addEventListener('input', (e) => {
+    document.getElementById(b.output).innerText = e.target.value || "..."; 
+  });
 }
 });
+
+const inAgeEl = document.getElementById('in-age');
+if (inAgeEl) {
+  inAgeEl.addEventListener('input', (e) => {
+    document.getElementById('view-age-box').innerHTML = translations[currentLang].cvAgeLabel + `<span>${e.target.value || '-'}</span>`;
+  });
+}
+
+const imgInputEl = document.getElementById('image-input');
+if (imgInputEl) {
+  imgInputEl.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader(); reader.onload = function(event) {
+      document.getElementById('view-photo').src = event.target.result; };
+      reader.readAsDataURL(file);
+    }
+  });
+}
 
 function addExperienceField() {
 const container = document.getElementById('experience-list'); const id = Date.now();
 const row = document.createElement('div'); row.className = 'dynamic-row'; row.id = `exp-${id}`;
 row.innerHTML = '<div class="grid-2"><input type="text" placeholder="الشركة"><input type="text" placeholder="الوظيفة"></div><div class="grid-2"><input type="text" placeholder="الفترة"><input type="text" placeholder="الوصف"></div><button type="button" class="btn-secondary btn-delete" style="color: #ef4444;" onclick="document.getElementById(\'exp-' + id + '\').remove(); updateDynamicLists();">حذف</button>';
-container.appendChild(row);
+if (container) container.appendChild(row);
 }
 
 function addEducationField() {
 const container = document.getElementById('education-list'); const id = Date.now();
 const row = document.createElement('div'); row.className = 'dynamic-row'; row.id = `edu-${id}`;
 row.innerHTML = '<div class="grid-2"><input type="text" placeholder="المؤسسة"><input type="text" placeholder="التخصص"></div><input type="text" placeholder="سنة التخرج"><button type="button" class="btn-secondary btn-delete" style="color: #ef4444;" onclick="document.getElementById(\'edu-' + id + '\').remove(); updateDynamicLists();">حذف</button>';
-container.appendChild(row);
+if (container) container.appendChild(row);
 }
 
 function addSkillField() {
 const container = document.getElementById('skills-list'); const id = Date.now(); const row = document.createElement('div'); row.className = 'dynamic-row'; row.id = `skill-${id}`;
 row.innerHTML = '<input type="text" placeholder="المهارة"><button type="button" class="btn-secondary btn-delete" style="color: #ef4444; margin-top:5px;" onclick="document.getElementById(\'skill-' + id + '\').remove(); updateDynamicLists();">حذف</button>';
-container.appendChild(row);
+if (container) container.appendChild(row);
 }
 
 function addLanguageField() {
 const container = document.getElementById('languages-list'); const id = Date.now();
 const row = document.createElement('div'); row.className = 'dynamic-row'; row.id = `lang-${id}`;
 row.innerHTML = '<input type="text" placeholder="اللغة والمستوى"><button type="button" class="btn-secondary btn-delete" style="color: #ef4444; margin-top:5px;" onclick="document.getElementById(\'lang-' + id + '\').remove(); updateDynamicLists();">حذف</button>';
-container.appendChild(row);
+if (container) container.appendChild(row);
 }
 
-document.getElementById('experience-list').addEventListener('input', updateDynamicLists);
-document.getElementById('education-list').addEventListener('input', updateDynamicLists);
-document.getElementById('skills-list').addEventListener('input', updateDynamicLists);
-document.getElementById('languages-list').addEventListener('input', updateDynamicLists);
+['experience-list', 'education-list', 'skills-list', 'languages-list'].forEach(listId => {
+  const el = document.getElementById(listId);
+  if (el) el.addEventListener('input', updateDynamicLists);
+});
 
 function updateDynamicLists() {
-const expView = document.getElementById('view-experience'); expView.innerHTML = "";
+const expView = document.getElementById('view-experience'); if(expView) expView.innerHTML = "";
 document.querySelectorAll('#experience-list .dynamic-row').forEach(row => {
 const inputs = row.querySelectorAll('input');
 if(inputs.length && (inputs[0].value || inputs[1].value)) { expView.innerHTML += `<div class="item-render"><h5>${inputs[1].value || ''} ${inputs[0].value || ''}</h5><span>${inputs[2].value || ''}</span><p>${inputs[3].value || ''}</p></div>`; }
 });
 
-const eduView = document.getElementById('view-education'); eduView.innerHTML = "";
+const eduView = document.getElementById('view-education'); if(eduView) eduView.innerHTML = "";
 document.querySelectorAll('#education-list .dynamic-row').forEach(row => {
 const inputs = row.querySelectorAll('input');
 if(inputs.length && (inputs[0].value || inputs[1].value)) { eduView.innerHTML += `<div class="item-render"><h5>${inputs[1].value || ''}</h5><p>${inputs[0].value || ''} | ${inputs[2].value || ''}</p></div>`; }
 });
 
-const skillView = document.getElementById('view-skills'); skillView.innerHTML = "";
-document.querySelectorAll('#skills-list .dynamic-row').forEach(row => { const input = row.querySelector('input'); if(input && input.value) skillView.innerHTML += `<li>${input.value}</li>`; });
+const skillView = document.getElementById('view-skills'); if(skillView) skillView.innerHTML = "";
+document.querySelectorAll('#skills-list .dynamic-row').forEach(row => { const input = row.querySelector('input'); if(input && input.value && skillView) skillView.innerHTML += `<li>${input.value}</li>`; });
 
-const langView = document.getElementById('view-languages'); langView.innerHTML = "";
-document.querySelectorAll('#languages-list .dynamic-row').forEach(row => { const input = row.querySelector('input'); if(input && input.value) langView.innerHTML += `<li>${input.value}</li>`; });
+const langView = document.getElementById('view-languages'); if(langView) langView.innerHTML = "";
+document.querySelectorAll('#languages-list .dynamic-row').forEach(row => { const input = row.querySelector('input'); if(input && input.value && langView) langView.innerHTML += `<li>${input.value}</li>`; });
 }
 
 window.onload = function() {
@@ -1397,9 +1528,6 @@ function startInteractiveTour() {
   driverObj.drive();
 }
 
-// ====================================================
-// 🛠️ منطق ومحركات أدوات الـ PDF التفاعلية الجديدة كلياً
-// ====================================================
 let activePdfToolType = '';
 let selectedDocxFile = null;
 let selectedPptxFile = null;
@@ -1411,13 +1539,13 @@ function openPdfModal(type) {
   const desc = document.getElementById('pdf-modal-desc');
   const content = document.getElementById('pdf-tool-content');
   
-  modal.classList.add('active');
-  content.innerHTML = ''; // تهيئة المحتوى
+  if (modal) modal.classList.add('active');
+  if (content) content.innerHTML = '';
 
   if (type === 'word') {
-    title.innerHTML = '<i class="fa-solid fa-file-word"></i> محول ملفات Word إلى PDF';
-    desc.innerText = 'قم برفع ملف Word حقيقي من نوع (.docx) من جهازك ليقوم الموقع بتحويله وتنسيقه لك مباشرة إلى ملف PDF.';
-    content.innerHTML = `
+    if(title) title.innerHTML = '<i class="fa-solid fa-file-word"></i> محول ملفات Word إلى PDF';
+    if(desc) desc.innerText = 'قم برفع ملف Word حقيقي من نوع (.docx) من جهازك ليقوم الموقع بتحويله وتنسيقه لك مباشرة إلى ملف PDF.';
+    if(content) content.innerHTML = `
       <div class="image-upload-box" onclick="document.getElementById('pdf-docx-input').click()">
         <label id="lbl-docx-upload"><i class="fa-solid fa-file-word" style="font-size:2rem; color:#2b579a;"></i><br>اضغط لاختيار ملف الـ Word من جهازك</label>
         <input type="file" id="pdf-docx-input" accept=".docx" style="display:none;" onchange="handleDocxSelection(this)">
@@ -1425,9 +1553,9 @@ function openPdfModal(type) {
       <div id="docx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
     `;
   } else if (type === 'slide') {
-    title.innerHTML = '<i class="fa-solid fa-file-powerpoint"></i> محول ملفات PowerPoint إلى PDF';
-    desc.innerText = 'ارفع ملف PowerPoint حقيقي من نوع (.pptx) ليقوم الموقع بتحويله بكفاءة إلى شرائح PDF متناسقة.';
-    content.innerHTML = `
+    if(title) title.innerHTML = '<i class="fa-solid fa-file-powerpoint"></i> محول ملفات PowerPoint إلى PDF';
+    if(desc) desc.innerText = 'ارفع ملف PowerPoint حقيقي من نوع (.pptx) ليقوم الموقع بتحويله بكفاءة إلى شرائح PDF متناسقة.';
+    if(content) content.innerHTML = `
       <div class="image-upload-box" onclick="document.getElementById('pdf-pptx-input').click()">
         <label id="lbl-pptx-upload"><i class="fa-solid fa-file-powerpoint" style="font-size:2rem; color:#d24726;"></i><br>اضغط لاختيار ملف الـ PowerPoint من جهازك</label>
         <input type="file" id="pdf-pptx-input" accept=".pptx" style="display:none;" onchange="handlePptxSelection(this)">
@@ -1435,9 +1563,9 @@ function openPdfModal(type) {
       <div id="pptx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
     `;
   } else if (type === 'images') {
-    title.innerHTML = '<i class="fa-solid fa-file-image"></i> مجمع الصور إلى مستند PDF';
-    desc.innerText = 'قم برفع صورة أو عدة صور من جهازك لتوليد مستند PDF حقيقي مدمج.';
-    content.innerHTML = `
+    if(title) title.innerHTML = '<i class="fa-solid fa-file-image"></i> مجمع الصور إلى مستند PDF';
+    if(desc) desc.innerText = 'قم برفع صورة أو عدة صور من جهازك لتوليد مستند PDF حقيقي مدمج.';
+    if(content) content.innerHTML = `
       <div class="image-upload-box" onclick="document.getElementById('pdf-images-input').click()">
         <label><i class="fa-solid fa-images"></i> اضغط هنا لاختيار الصور من جهازك</label>
         <input type="file" id="pdf-images-input" accept="image/*" multiple style="display:none;" onchange="previewSelectedPdfImages(this)">
@@ -1445,9 +1573,9 @@ function openPdfModal(type) {
       <div id="pdf-images-preview" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; justify-content:center;"></div>
     `;
   } else if (type === 'text') {
-    title.innerHTML = '<i class="fa-solid fa-file-lines"></i> محول النصوص والملاحظات إلى PDF';
-    desc.innerText = 'قم بكتابة أي نصوص حرة أو أكواد برمجية لتحويلها بشكل فوري ومنسق إلى ملف PDF.';
-    content.innerHTML = `
+    if(title) title.innerHTML = '<i class="fa-solid fa-file-lines"></i> محول النصوص والملاحظات إلى PDF';
+    if(desc) desc.innerText = 'قم بكتابة أي نصوص حرة أو أكواد برمجية لتحويلها بشكل فوري ومنسق إلى ملف PDF.';
+    if(content) content.innerHTML = `
       <div class="input-group">
         <label>عنوان الملف</label>
         <input type="text" id="pdf-text-filename" placeholder="اكتب اسم الملف للتنزيل">
@@ -1461,34 +1589,32 @@ function openPdfModal(type) {
 }
 
 function closePdfModal() {
-  document.getElementById('pdf-tool-modal').classList.remove('active');
+  const modal = document.getElementById('pdf-tool-modal');
+  if (modal) modal.classList.remove('active');
   selectedDocxFile = null;
   selectedPptxFile = null;
 }
 
-// معالجة اختيار ملف Word
 function handleDocxSelection(input) {
   const statusDiv = document.getElementById('docx-file-status');
   if (input.files && input.files[0]) {
     selectedDocxFile = input.files[0];
-    statusDiv.innerText = `تم تحديد الملف: ${selectedDocxFile.name} (${(selectedDocxFile.size/1024).toFixed(1)} KB)`;
+    if (statusDiv) statusDiv.innerText = `تم تحديد الملف: ${selectedDocxFile.name} (${(selectedDocxFile.size/1024).toFixed(1)} KB)`;
   }
 }
 
-// معالجة اختيار ملف PowerPoint
 function handlePptxSelection(input) {
   const statusDiv = document.getElementById('pptx-file-status');
   if (input.files && input.files[0]) {
     selectedPptxFile = input.files[0];
-    statusDiv.innerText = `تم تحديد الملف: ${selectedPptxFile.name} (${(selectedPptxFile.size/1024).toFixed(1)} KB)`;
+    if (statusDiv) statusDiv.innerText = `تم تحديد الملف: ${selectedPptxFile.name} (${(selectedPptxFile.size/1024).toFixed(1)} KB)`;
   }
 }
 
-// استعراض الصور المحددة في أداة تجميع الصور
 let selectedImageBase64List = [];
 function previewSelectedPdfImages(input) {
   const previewContainer = document.getElementById('pdf-images-preview');
-  previewContainer.innerHTML = '';
+  if (previewContainer) previewContainer.innerHTML = '';
   selectedImageBase64List = [];
   
   if (input.files && input.files.length) {
@@ -1503,144 +1629,143 @@ function previewSelectedPdfImages(input) {
         img.style.objectFit = "cover";
         img.style.borderRadius = "8px";
         img.style.border = "1px solid var(--border-color)";
-        previewContainer.appendChild(img);
+        if (previewContainer) previewContainer.appendChild(img);
       };
       reader.readAsDataURL(file);
     });
   }
 }
 
-// تنفيذ ومعالجة الأدوات وتحميل الـ PDF فورياً ومحلياً
-document.getElementById('btn-pdf-execute').addEventListener('click', function() {
-  const element = document.createElement('div');
-  element.style.padding = '30px';
-  element.style.color = '#333';
-  element.style.background = '#fff';
-  element.style.fontFamily = 'Cairo, sans-serif';
-  element.style.direction = 'rtl';
-  
-  let filename = 'Khotwa_Smart_Document.pdf';
-
-  if (activePdfToolType === 'word') {
-    if (!selectedDocxFile) {
-      alert("الرجاء تحديد ملف وورد (.docx) أولاً من جهازك!");
-      return;
-    }
+const btnPdfExec = document.getElementById('btn-pdf-execute');
+if (btnPdfExec) {
+  btnPdfExec.addEventListener('click', function() {
+    const element = document.createElement('div');
+    element.style.padding = '30px';
+    element.style.color = '#333';
+    element.style.background = '#fff';
+    element.style.fontFamily = 'Cairo, sans-serif';
+    element.style.direction = 'rtl';
     
-    filename = `${selectedDocxFile.name.replace(/\.[^/.]+$/, "")}.pdf`;
-    const executeBtn = document.getElementById('btn-pdf-execute');
-    executeBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري قراءة وتحويل الملف...';
-    executeBtn.disabled = true;
+    let filename = 'Khotwa_Smart_Document.pdf';
 
-    const reader = new FileReader();
-    reader.onload = function(event) {
-      const arrayBuffer = event.target.result;
-      mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
-        .then(function(result) {
-          element.innerHTML = `
-            <div style="border-bottom: 2px solid #2b579a; padding-bottom: 15px; margin-bottom: 20px; text-align:center;">
-              <h1 style="color: #2b579a; font-size: 24px; margin-bottom: 5px;">${filename.replace('.pdf', '')}</h1>
-              <p style="color: #666; font-size: 12px;">تم التحويل عبر منصة خطوة الذكية</p>
-            </div>
-            <div style="font-size: 14px; line-height: 1.8; color: #1e293b;">
-              ${result.value}
-            </div>
-          `;
-          
-          generatePdfAndDownload(element, filename, () => {
+    if (activePdfToolType === 'word') {
+      if (!selectedDocxFile) {
+        alert("الرجاء تحديد ملف وورد (.docx) أولاً من جهازك!");
+        return;
+      }
+      
+      filename = `${selectedDocxFile.name.replace(/\.[^/.]+$/, "")}.pdf`;
+      const executeBtn = document.getElementById('btn-pdf-execute');
+      executeBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري قراءة وتحويل الملف...';
+      executeBtn.disabled = true;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const arrayBuffer = event.target.result;
+        mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+          .then(function(result) {
+            element.innerHTML = `
+              <div style="border-bottom: 2px solid #2b579a; padding-bottom: 15px; margin-bottom: 20px; text-align:center;">
+                <h1 style="color: #2b579a; font-size: 24px; margin-bottom: 5px;">${filename.replace('.pdf', '')}</h1>
+                <p style="color: #666; font-size: 12px;">تم التحويل عبر منصة خطوة الذكية</p>
+              </div>
+              <div style="font-size: 14px; line-height: 1.8; color: #1e293b;">
+                ${result.value}
+              </div>
+            `;
+            
+            generatePdfAndDownload(element, filename, () => {
+              executeBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> معالجة وتنزيل ملف PDF';
+              executeBtn.disabled = false;
+            });
+          })
+          .catch(function(err) {
+            alert("حدث خطأ أثناء قراءة محتوى ملف الـ Word: " + err.message);
             executeBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> معالجة وتنزيل ملف PDF';
             executeBtn.disabled = false;
           });
-        })
-        .catch(function(err) {
-          alert("حدث خطأ أثناء قراءة محتوى ملف الـ Word: " + err.message);
+      };
+      reader.readAsArrayBuffer(selectedDocxFile);
+    } 
+    else if (activePdfToolType === 'slide') {
+      if (!selectedPptxFile) {
+        alert("الرجاء تحديد ملف بوربوينت (.pptx) أولاً من جهازك!");
+        return;
+      }
+      
+      filename = `${selectedPptxFile.name.replace(/\.[^/.]+$/, "")}.pdf`;
+      const executeBtn = document.getElementById('btn-pdf-execute');
+      executeBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري معالجة الشرائح برمجياً...';
+      executeBtn.disabled = true;
+
+      setTimeout(() => {
+        element.innerHTML = `
+          <div style="border: 4px double #d24726; padding: 50px 30px; text-align: center; background: #fafafa; margin-bottom: 40px; border-radius: 12px;">
+            <i class="fa-solid fa-file-powerpoint" style="font-size: 4rem; color: #d24726; margin-bottom: 15px;"></i>
+            <h1 style="color: #d24726; font-size: 28px; margin-bottom: 15px;">${filename.replace('.pdf', '')}</h1>
+            <p style="color: #555; font-size: 14px;">مستند العرض التقديمي المصدر: ${selectedPptxFile.name}</p>
+            <p style="color: #888; font-size: 12px; margin-top: 10px;">تمت مواءمة وتصدير شرائح العرض بنجاح وبدقة عالية عبر منصة خطوة الذكية.</p>
+          </div>
+          <div style="page-break-before: always; padding: 40px; border: 1px solid #ccc; border-radius: 12px; background: #fff; text-align: center;">
+            <h2 style="color: #333; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;">تقرير تفصيلي بملف العرض التقديمي:</h2>
+            <div style="font-size: 16px; line-height: 2; color: #475569; text-align: right;">
+              <p><strong>اسم العرض:</strong> ${selectedPptxFile.name}</p>
+              <p><strong>حجم الملف الفعلي:</strong> ${(selectedPptxFile.size / 1024).toFixed(1)} كيلوبايت</p>
+              <p><strong>تاريخ التصدير وتحويل المستند:</strong> ${new Date().toLocaleDateString('ar-JO')}</p>
+              <p><strong>حالة التصدير الحالية:</strong> تم تحويل البنية وحفظ المستند بصيغة PDF نقية وجاهزة للطباعة والعرض الفوري.</p>
+            </div>
+          </div>
+        `;
+        
+        generatePdfAndDownload(element, filename, () => {
           executeBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> معالجة وتنزيل ملف PDF';
           executeBtn.disabled = false;
         });
-    };
-    reader.readAsArrayBuffer(selectedDocxFile);
-  } 
-  else if (activePdfToolType === 'slide') {
-    if (!selectedPptxFile) {
-      alert("الرجاء تحديد ملف بوربوينت (.pptx) أولاً من جهازك!");
-      return;
-    }
-    
-    filename = `${selectedPptxFile.name.replace(/\.[^/.]+$/, "")}.pdf`;
-    const executeBtn = document.getElementById('btn-pdf-execute');
-    executeBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري معالجة الشرائح برمجياً...';
-    executeBtn.disabled = true;
-
-    // بما أنه لا يمكن معالجة وتحويل بنية pptx المعقدة بالكامل محلياً بدون خادم،
-    // يتم إنشاء قالب عرض تقديمي منظم وأنيق للغاية للمستخدم يحمل اسم الملف المرفوع وبياناته الفنية
-    setTimeout(() => {
-      element.innerHTML = `
-        <div style="border: 4px double #d24726; padding: 50px 30px; text-align: center; background: #fafafa; margin-bottom: 40px; border-radius: 12px;">
-          <i class="fa-solid fa-file-powerpoint" style="font-size: 4rem; color: #d24726; margin-bottom: 15px;"></i>
-          <h1 style="color: #d24726; font-size: 28px; margin-bottom: 15px;">${filename.replace('.pdf', '')}</h1>
-          <p style="color: #555; font-size: 14px;">مستند العرض التقديمي المصدر: ${selectedPptxFile.name}</p>
-          <p style="color: #888; font-size: 12px; margin-top: 10px;">تمت مواءمة وتصدير شرائح العرض بنجاح وبدقة عالية عبر منصة خطوة الذكية.</p>
-        </div>
-        <div style="page-break-before: always; padding: 40px; border: 1px solid #ccc; border-radius: 12px; background: #fff; text-align: center;">
-          <h2 style="color: #333; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;">تقرير تفصيلي بملف العرض التقديمي:</h2>
-          <div style="font-size: 16px; line-height: 2; color: #475569; text-align: right;">
-            <p><strong>اسم العرض:</strong> ${selectedPptxFile.name}</p>
-            <p><strong>حجم الملف الفعلي:</strong> ${(selectedPptxFile.size / 1024).toFixed(1)} كيلوبايت</p>
-            <p><strong>تاريخ التصدير وتحويل المستند:</strong> ${new Date().toLocaleDateString('ar-JO')}</p>
-            <p><strong>حالة التصدير الحالية:</strong> تم تحويل البنية وحفظ المستند بصيغة PDF نقية وجاهزة للطباعة والعرض الفوري.</p>
-          </div>
-        </div>
-      `;
+      }, 1500);
+    } 
+    else if (activePdfToolType === 'images') {
+      if (selectedImageBase64List.length === 0) {
+        alert("الرجاء اختيار صورة واحدة على الأقل لتحويلها!");
+        return;
+      }
+      filename = `Melted_Images_Doc.pdf`;
+      element.style.padding = '0px';
+      element.style.textAlign = 'center';
       
-      generatePdfAndDownload(element, filename, () => {
-        executeBtn.innerHTML = '<i class="fa-solid fa-file-pdf"></i> معالجة وتنزيل ملف PDF';
-        executeBtn.disabled = false;
+      selectedImageBase64List.forEach((base64, index) => {
+        const imgContainer = document.createElement('div');
+        imgContainer.style.padding = '20px';
+        if (index > 0) imgContainer.style.pageBreakBefore = 'always';
+        
+        imgContainer.innerHTML = `
+          <img src="${base64}" style="max-width: 100%; max-height: 250mm; object-fit: contain; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);" />
+          <p style="margin-top: 10px; font-size: 12px; color: #666;">صورة رقم ${index + 1} - تم التجميع عبر منصة خطوة</p>
+        `;
+        element.appendChild(imgContainer);
       });
-    }, 1500);
-  } 
-  else if (activePdfToolType === 'images') {
-    if (selectedImageBase64List.length === 0) {
-      alert("الرجاء اختيار صورة واحدة على الأقل لتحويلها!");
-      return;
-    }
-    filename = `Melted_Images_Doc.pdf`;
-    element.style.padding = '0px';
-    element.style.textAlign = 'center';
-    
-    selectedImageBase64List.forEach((base64, index) => {
-      const imgContainer = document.createElement('div');
-      imgContainer.style.padding = '20px';
-      if (index > 0) imgContainer.style.pageBreakBefore = 'always';
       
-      imgContainer.innerHTML = `
-        <img src="${base64}" style="max-width: 100%; max-height: 250mm; object-fit: contain; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);" />
-        <p style="margin-top: 10px; font-size: 12px; color: #666;">صورة رقم ${index + 1} - تم التجميع عبر منصة خطوة</p>
+      generatePdfAndDownload(element, filename);
+    } 
+    else if (activePdfToolType === 'text') {
+      const textFilename = document.getElementById('pdf-text-filename').value || 'ملاحظات_حرة';
+      const textContent = document.getElementById('pdf-text-area').value || 'لا يوجد نص مدخل.';
+      
+      filename = `${textFilename}.pdf`;
+      element.innerHTML = `
+        <div style="border-left: 4px solid #ff7b00; padding-left: 15px; margin-bottom: 20px;">
+          <h2 style="color: #333;">${textFilename}</h2>
+          <p style="color: #888; font-size: 11px;">تاريخ الإنشاء والتصدير: ${new Date().toLocaleDateString('ar-JO')}</p>
+        </div>
+        <pre style="font-size: 13px; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; white-space: pre-wrap; font-family: monospace; color: #0f172a;">
+          ${textContent}
+        </pre>
       `;
-      element.appendChild(imgContainer);
-    });
-    
-    generatePdfAndDownload(element, filename);
-  } 
-  else if (activePdfToolType === 'text') {
-    const textFilename = document.getElementById('pdf-text-filename').value || 'ملاحظات_حرة';
-    const textContent = document.getElementById('pdf-text-area').value || 'لا يوجد نص مدخل.';
-    
-    filename = `${textFilename}.pdf`;
-    element.innerHTML = `
-      <div style="border-left: 4px solid #ff7b00; padding-left: 15px; margin-bottom: 20px;">
-        <h2 style="color: #333;">${textFilename}</h2>
-        <p style="color: #888; font-size: 11px;">تاريخ الإنشاء والتصدير: ${new Date().toLocaleDateString('ar-JO')}</p>
-      </div>
-      <pre style="font-size: 13px; background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; white-space: pre-wrap; font-family: monospace; color: #0f172a;">
-        ${textContent}
-      </pre>
-    `;
-    
-    generatePdfAndDownload(element, filename);
-  }
-});
+      
+      generatePdfAndDownload(element, filename);
+    }
+  });
+}
 
-// دالة مساعدة موحدة لتوليد الـ PDF من مكتبة html2pdf
 function generatePdfAndDownload(htmlElement, outputFilename, callback) {
   const options = {
     margin: 10,
@@ -1657,6 +1782,28 @@ function generatePdfAndDownload(htmlElement, outputFilename, callback) {
     if (callback) callback();
   });
 }
+
+// منع القائمة المنسدلة عند الضغط بالزر الأيمن للمؤشر (Right Click)
+document.addEventListener('contextmenu', function(e) {
+  e.preventDefault();
+});
+
+// منع اختصارات لوحة التحكم الخاصة بالفحص وأدوات المطورين
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'F12') {
+    e.preventDefault();
+  }
+  if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'J' || e.key === 'j' || e.key === 'C' || e.key === 'c')) {
+    e.preventDefault();
+  }
+  if (e.ctrlKey && (e.key === 'u' || e.key === 'U' || e.key === 'ع')) {
+    e.preventDefault();
+  }
+  if (e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+  }
+});
+
 </script>
 </body>
 </html>
