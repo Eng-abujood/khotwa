@@ -981,11 +981,8 @@ to { opacity: 1; }
 
 <script src="https://cdn.jsdelivr.net/npm/driver.js@1.0.1/dist/driver.js.iife.js"></script>
 <script>
-/*---------------------------------------------------------------*/
-/*-------------عند الصيانة true---------عند الانتهاء false----------------*/
-                   const isMaintenance = false; 
-/*---------------------------------------------------------------*/
-/*---------------------------------------------------------------*/
+// اجعل هذا المتغير true عند الحاجة للصيانة
+const isMaintenance = false; 
 
 if (isMaintenance) {
     const loader = document.getElementById('maintenance-mode');
@@ -1025,6 +1022,20 @@ let isLoginMode = true;
 // متغيرات التعامل مع رمز التحقق
 let generatedVerificationCode = null;
 let isAwaitingVerification = false;
+
+// متغير لحفظ الخدمة التي كان يحاول المستخدم الوصول إليها قبل تسجيل الدخول
+let pendingAction = null;
+
+// دالة فحص تسجيل الدخول والتوجيه التلقائي
+function checkAuthAndProceed(actionCallback) {
+  if (currentUser) {
+    actionCallback();
+  } else {
+    pendingAction = actionCallback;
+    alert("يرجى تسجيل الدخول أو إنشاء حساب جديد أولاً لاستخدام هذه الخدمة!");
+    openAuthModal();
+  }
+}
 
 // المراقبة التلقائية لحالة تسجيل الدخول
 auth.onAuthStateChanged((user) => {
@@ -1122,7 +1133,7 @@ document.getElementById('login-form').addEventListener('submit', function(e) {
       return;
     }
 
-    // 2. تسجيل الدخول عبر الفحص المباشر في Firestore (يضمن استخدام كلمة السر الجديدة دائماً)
+    // 2. تسجيل الدخول عبر الفحص المباشر في Firestore
     db.collection("users_profiles").where("email", "==", email).get().then((querySnapshot) => {
       if (!querySnapshot.empty) {
         let userData = null;
@@ -1133,7 +1144,6 @@ document.getElementById('login-form').addEventListener('submit', function(e) {
           userId = doc.id;
         });
 
-        // التحقق من كلمة السر (إذا كانت مطابقة بـ Firestore أو Firebase Auth)
         if (userData && userData.password === pass) {
           alert("أهلاً بك في منصة خطوة الذكية!");
           const userObj = { uid: userId, email: email, name: userData.name || '' };
@@ -1141,12 +1151,24 @@ document.getElementById('login-form').addEventListener('submit', function(e) {
           currentUser = userObj;
           
           closeAuthModal();
-          location.reload(); // تحديث الصفحة لتأكيد الجلسة
+          
+          // تنفيذ الخدمة المطلوبة تلقائياً بعد تسجيل الدخول
+          if (pendingAction) {
+            const actionToRun = pendingAction;
+            pendingAction = null;
+            actionToRun();
+          } else {
+            location.reload();
+          }
         } else {
-          // محاولة ثانوية عبر Auth إن لم تكن مسجلة في Firestore كـ Plaintext
           auth.signInWithEmailAndPassword(email, pass).then((userCredential) => {
             alert("أهلاً بك في منصة خطوة الذكية!");
             closeAuthModal();
+            if (pendingAction) {
+              const actionToRun = pendingAction;
+              pendingAction = null;
+              actionToRun();
+            }
           }).catch((error) => {
             alert("خطأ: كلمة المرور أو البريد الإلكتروني غير صحيح!");
           });
@@ -1208,13 +1230,18 @@ document.getElementById('login-form').addEventListener('submit', function(e) {
             uid: u.uid,
             name: name,
             email: email,
-            password: pass, // حفظ كلمة السر في Firestore لضمان المطابقة دائماً
+            password: pass,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
         })
         .then(() => {
           alert("تم تأكيد البريد الإلكتروني وإنشاء حسابك بنجاح!");
           closeAuthModal();
+          if (pendingAction) {
+            const actionToRun = pendingAction;
+            pendingAction = null;
+            actionToRun();
+          }
         })
         .catch((error) => {
           alert("خطأ بالتسجيل: " + error.message);
@@ -1232,11 +1259,13 @@ function logout() {
 }
 
 function navigateToService(service) {
-  if (service === 'cv') {
-    showScreen('main-app');
-  } else if (service === 'pdf') {
-    showScreen('pdf-app');
-  }
+  checkAuthAndProceed(() => {
+    if (service === 'cv') {
+      showScreen('main-app');
+    } else if (service === 'pdf') {
+      showScreen('pdf-app');
+    }
+  });
 }
 
 function backToPortal() {
@@ -1536,59 +1565,61 @@ let selectedDocxFile = null;
 let selectedPptxFile = null;
 
 function openPdfModal(type) {
-  activePdfToolType = type;
-  const modal = document.getElementById('pdf-tool-modal');
-  const title = document.getElementById('pdf-modal-title');
-  const desc = document.getElementById('pdf-modal-desc');
-  const content = document.getElementById('pdf-tool-content');
-  
-  if (modal) modal.classList.add('active');
-  if (content) content.innerHTML = '';
+  checkAuthAndProceed(() => {
+    activePdfToolType = type;
+    const modal = document.getElementById('pdf-tool-modal');
+    const title = document.getElementById('pdf-modal-title');
+    const desc = document.getElementById('pdf-modal-desc');
+    const content = document.getElementById('pdf-tool-content');
+    
+    if (modal) modal.classList.add('active');
+    if (content) content.innerHTML = '';
 
-  if (type === 'word') {
-    if(title) title.innerHTML = '<i class="fa-solid fa-file-word"></i> محول ملفات Word إلى PDF';
-    if(desc) desc.innerText = 'قم برفع ملف Word حقيقي من نوع (.docx) من جهازك ليقوم الموقع بتحويله وتنسيقه لك مباشرة إلى ملف PDF.';
-    if(content) content.innerHTML = `
-      <div class="image-upload-box" onclick="document.getElementById('pdf-docx-input').click()">
-        <label id="lbl-docx-upload"><i class="fa-solid fa-file-word" style="font-size:2rem; color:#2b579a;"></i><br>اضغط لاختيار ملف الـ Word من جهازك</label>
-        <input type="file" id="pdf-docx-input" accept=".docx" style="display:none;" onchange="handleDocxSelection(this)">
-      </div>
-      <div id="docx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
-    `;
-  } else if (type === 'slide') {
-    if(title) title.innerHTML = '<i class="fa-solid fa-file-powerpoint"></i> محول ملفات PowerPoint إلى PDF';
-    if(desc) desc.innerText = 'ارفع ملف PowerPoint حقيقي من نوع (.pptx) ليقوم الموقع بتحويله بكفاءة إلى شرائح PDF متناسقة.';
-    if(content) content.innerHTML = `
-      <div class="image-upload-box" onclick="document.getElementById('pdf-pptx-input').click()">
-        <label id="lbl-pptx-upload"><i class="fa-solid fa-file-powerpoint" style="font-size:2rem; color:#d24726;"></i><br>اضغط لاختيار ملف الـ PowerPoint من جهازك</label>
-        <input type="file" id="pdf-pptx-input" accept=".pptx" style="display:none;" onchange="handlePptxSelection(this)">
-      </div>
-      <div id="pptx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
-    `;
-  } else if (type === 'images') {
-    if(title) title.innerHTML = '<i class="fa-solid fa-file-image"></i> مجمع الصور إلى مستند PDF';
-    if(desc) desc.innerText = 'قم برفع صورة أو عدة صور من جهازك لتوليد مستند PDF حقيقي مدمج.';
-    if(content) content.innerHTML = `
-      <div class="image-upload-box" onclick="document.getElementById('pdf-images-input').click()">
-        <label><i class="fa-solid fa-images"></i> اضغط هنا لاختيار الصور من جهازك</label>
-        <input type="file" id="pdf-images-input" accept="image/*" multiple style="display:none;" onchange="previewSelectedPdfImages(this)">
-      </div>
-      <div id="pdf-images-preview" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; justify-content:center;"></div>
-    `;
-  } else if (type === 'text') {
-    if(title) title.innerHTML = '<i class="fa-solid fa-file-lines"></i> محول النصوص والملاحظات إلى PDF';
-    if(desc) desc.innerText = 'قم بكتابة أي نصوص حرة أو أكواد برمجية لتحويلها بشكل فوري ومنسق إلى ملف PDF.';
-    if(content) content.innerHTML = `
-      <div class="input-group">
-        <label>عنوان الملف</label>
-        <input type="text" id="pdf-text-filename" placeholder="اكتب اسم الملف للتنزيل">
-      </div>
-      <div class="input-group">
-        <label>النص البرمجي أو المذكرة الحرة</label>
-        <textarea id="pdf-text-area" rows="8" placeholder="اكتب ملاحظاتك، خواطرك أو نصوصك الحرة هنا..."></textarea>
-      </div>
-    `;
-  }
+    if (type === 'word') {
+      if(title) title.innerHTML = '<i class="fa-solid fa-file-word"></i> محول ملفات Word إلى PDF';
+      if(desc) desc.innerText = 'قم برفع ملف Word حقيقي من نوع (.docx) من جهازك ليقوم الموقع بتحويله وتنسيقه لك مباشرة إلى ملف PDF.';
+      if(content) content.innerHTML = `
+        <div class="image-upload-box" onclick="document.getElementById('pdf-docx-input').click()">
+          <label id="lbl-docx-upload"><i class="fa-solid fa-file-word" style="font-size:2rem; color:#2b579a;"></i><br>اضغط لاختيار ملف الـ Word من جهازك</label>
+          <input type="file" id="pdf-docx-input" accept=".docx" style="display:none;" onchange="handleDocxSelection(this)">
+        </div>
+        <div id="docx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
+      `;
+    } else if (type === 'slide') {
+      if(title) title.innerHTML = '<i class="fa-solid fa-file-powerpoint"></i> محول ملفات PowerPoint إلى PDF';
+      if(desc) desc.innerText = 'ارفع ملف PowerPoint حقيقي من نوع (.pptx) ليقوم الموقع بتحويله بكفاءة إلى شرائح PDF متناسقة.';
+      if(content) content.innerHTML = `
+        <div class="image-upload-box" onclick="document.getElementById('pdf-pptx-input').click()">
+          <label id="lbl-pptx-upload"><i class="fa-solid fa-file-powerpoint" style="font-size:2rem; color:#d24726;"></i><br>اضغط لاختيار ملف الـ PowerPoint من جهازك</label>
+          <input type="file" id="pdf-pptx-input" accept=".pptx" style="display:none;" onchange="handlePptxSelection(this)">
+        </div>
+        <div id="pptx-file-status" style="text-align: center; font-weight: bold; color: var(--success-color); margin-top: 10px;"></div>
+      `;
+    } else if (type === 'images') {
+      if(title) title.innerHTML = '<i class="fa-solid fa-file-image"></i> مجمع الصور إلى مستند PDF';
+      if(desc) desc.innerText = 'قم برفع صورة أو عدة صور من جهازك لتوليد مستند PDF حقيقي مدمج.';
+      if(content) content.innerHTML = `
+        <div class="image-upload-box" onclick="document.getElementById('pdf-images-input').click()">
+          <label><i class="fa-solid fa-images"></i> اضغط هنا لاختيار الصور من جهازك</label>
+          <input type="file" id="pdf-images-input" accept="image/*" multiple style="display:none;" onchange="previewSelectedPdfImages(this)">
+        </div>
+        <div id="pdf-images-preview" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; justify-content:center;"></div>
+      `;
+    } else if (type === 'text') {
+      if(title) title.innerHTML = '<i class="fa-solid fa-file-lines"></i> محول النصوص والملاحظات إلى PDF';
+      if(desc) desc.innerText = 'قم بكتابة أي نصوص حرة أو أكواد برمجية لتحويلها بشكل فوري ومنسق إلى ملف PDF.';
+      if(content) content.innerHTML = `
+        <div class="input-group">
+          <label>عنوان الملف</label>
+          <input type="text" id="pdf-text-filename" placeholder="اكتب اسم الملف للتنزيل">
+        </div>
+        <div class="input-group">
+          <label>النص البرمجي أو المذكرة الحرة</label>
+          <textarea id="pdf-text-area" rows="8" placeholder="اكتب ملاحظاتك، خواطرك أو نصوصك الحرة هنا..."></textarea>
+        </div>
+      `;
+    }
+  });
 }
 
 function closePdfModal() {
@@ -1806,7 +1837,6 @@ document.addEventListener('keydown', function(e) {
     e.preventDefault();
   }
 });
-
 </script>
 </body>
 </html>
